@@ -21,44 +21,102 @@ class AdminController extends Controller
 
     public function index(Request $request)
     {
+
+        $query = DB::table('t_user')
+            ->select(
+                't_user.nama',
+                't_user.code',
+                'lampiran.tanggal_spp',
+                'lampiran.no_spp',
+                'lampiran.unit',
+                'lampiran.status_karyawan',
+                DB::raw('lampiran.hutang as hutang'),
+                DB::raw('SUM(transactions.pencicilan_rutin + transactions.pencicilan_bertahap) as total_pembayaran'),
+                DB::raw('SUM(transactions.pencicilan_rutin) + SUM(transactions.pencicilan_bertahap) - lampiran.hutang as sisa_sht')
+            )
+            ->leftJoin('transactions', 't_user.code', '=', 'transactions.code')
+            ->leftJoin('lampiran', 't_user.code', '=', 'lampiran.code');
+
+
+        if ($request->has('status_lunas')) {
+            if ($request->get('status_lunas') == 'Belum Lunas') {
+                $query->having(
+                    DB::raw('SUM(transactions.pencicilan_rutin) + SUM(transactions.pencicilan_bertahap) - lampiran.hutang'),
+                    '>',
+                    0
+                );
+            } else {
+                $query->having(
+                    DB::raw('SUM(transactions.pencicilan_rutin) + SUM(transactions.pencicilan_bertahap) - lampiran.hutang'),
+                    '=',
+                    0
+                );
+            }
+        }
+
+
+        $users = $query->groupBy(
+            't_user.nama',
+            't_user.code',
+            'lampiran.tanggal_spp',
+            'lampiran.no_spp',
+            'lampiran.unit',
+            'lampiran.status_karyawan',
+            'lampiran.hutang'
+        )
+            ->get();
+        $totalHutang = $users->sum('hutang');
+        $totalPencicilan = $users->sum('total_pembayaran');
+        $totalSisaSht = $users->sum('sisa_sht');
+
+
         // Build base query for users
-        $query = UserModel::query();
-        
+        // $query = UserModel::query();
+
         // Apply filters before fetching the data
-        $this->applyFilters($query, $request);
-        
+        // $this->applyFilters($query, $request);
+
         // Apply sorting by date (tanggal_spp) if requested
-        $this->applyDateSorting($query, $request);
-        
+        // $this->applyDateSorting($query, $request);
+
         // Fetch users with the associated data
-        $users = $query->with(['lampiran', 'transactions'])->get();
-        
+        // $users = $query->with(['lampiran', 'transactions'])->get();
+
         // Process each user to calculate total payments and remaining balance
-        $users = $this->processUserData($users);
-        
+        // $users = $this->processUserData($users);
+
         // Filter by 'status_lunas' if requested
-        $users = $this->filterByStatusLunas($users, $request);
-    
+        // $users = $this->filterByStatusLunas($users, $request);
+
         // Paginate the results before fetching related data
-        $users = $this->paginateUsers($users, $request);
-        
+        // $users = $this->paginateUsers($users, $request);
+
         // Fetch filter options for units, statuses, years, and months
         $units = Lampiran::select('unit')->distinct()->get();
         $status = Lampiran::select('status_karyawan')->distinct()->get();
         $years = Lampiran::selectRaw('YEAR(tanggal_spp) as year')->distinct()->pluck('year');
         $months = Lampiran::selectRaw('MONTH(tanggal_spp) as month')->distinct()->pluck('month');
-        
+
         // Calculate total payments and debts for the unit or status filters
-        $totalPencicilan = $this->calculateTotalPencicilan($request);
-        $totalHutang = $this->calculateTotalHutang($request);
-        
+        // $totalPencicilan = $this->calculateTotalPencicilan($request);
+        // $totalHutang = $this->calculateTotalHutang($request);
+
         // Calculate remaining balance (sisa_sht)
-        $totalSisaSht = $totalPencicilan->total_pembayaran - $totalHutang->total_hutang;
-        
+        // $totalSisaSht = $totalPencicilan->total_pembayaran - $totalHutang->total_hutang;
+
         // Return the view with the necessary data
-        return view('admin.admin', compact('users', 'years', 'months', 'totalHutang', 'totalPencicilan', 'totalSisaSht', 'status', 'units'));
+        return view('admin.admin', compact(
+            'users',
+            'years',
+            'months',
+            'totalHutang',
+            'totalPencicilan',
+            'totalSisaSht',
+            'status',
+            'units'
+        ));
     }
-    
+
     private function applyFilters($query, $request)
     {
         if ($request->filled('status')) {
@@ -66,58 +124,58 @@ class AdminController extends Controller
                 $query->where('status_karyawan', $request->status);
             });
         }
-    
+
         if ($request->filled('unit')) {
             $query->whereHas('lampiran', function ($query) use ($request) {
                 $query->where('unit', $request->unit);
             });
         }
-    
+
         if ($request->filled('tanggal_spp')) {
             $query->whereHas('lampiran', function ($query) use ($request) {
                 $query->whereDate('tanggal_spp', '=', $request->tanggal_spp);
             });
         }
-    
+
         if ($request->filled('tahun')) {
             $query->whereHas('lampiran', function ($query) use ($request) {
                 $query->whereYear('tanggal_spp', '=', $request->tahun);
             });
         }
-    
+
         if ($request->filled('bulan')) {
             $query->whereHas('lampiran', function ($query) use ($request) {
                 $query->whereMonth('tanggal_spp', '=', $request->bulan);
             });
         }
     }
-    
+
     private function applyDateSorting($query, $request)
     {
         // Check if sorting by date is requested
         if ($request->filled('sort_tanggal')) {
             $direction = $request->input('sort_tanggal') == 'desc' ? 'desc' : 'asc';
             $query->leftJoin('lampiran', 't_user.code', '=', 'lampiran.code') // Pastikan nama tabel benar
-                  ->orderBy('lampiran.tanggal_spp', $direction)
-                  ->select('t_user.*'); // Memilih kolom dari t_user untuk menghindari konflik
+                ->orderBy('lampiran.tanggal_spp', $direction)
+                ->select('t_user.*'); // Memilih kolom dari t_user untuk menghindari konflik
         }
     }
-    
+
     private function processUserData($users)
     {
         foreach ($users as $user) {
             $user->totalPencicilan = $user->transactions->sum(function ($transaction) {
                 return ($transaction->pencicilan_rutin ?? 0) + ($transaction->pencicilan_bertahap ?? 0);
             });
-    
+
             $hutang = $user->lampiran->hutang ?? 0;
             $user->sisa_sht = $hutang - $user->totalPencicilan;
             $user->status_lunas = $user->sisa_sht <= 0 ? 'Lunas' : 'Belum Lunas';
         }
-    
+
         return $users;
     }
-    
+
     private function filterByStatusLunas($users, $request)
     {
         if ($statusLunas = $request->input('status_lunas')) {
@@ -125,10 +183,10 @@ class AdminController extends Controller
                 return $user->status_lunas === $statusLunas;
             });
         }
-    
+
         return $users;
     }
-    
+
     private function paginateUsers($users, $request)
     {
         return new \Illuminate\Pagination\LengthAwarePaginator(
@@ -139,63 +197,63 @@ class AdminController extends Controller
             ['path' => url()->current()]
         );
     }
-    
+
     private function calculateTotalPencicilan($request)
     {
         $query = DB::table('transactions')
-                   ->selectRaw('SUM(pencicilan_rutin + pencicilan_bertahap) AS total_pembayaran')
-                   ->join('lampiran', 'transactions.code', '=', 'lampiran.code');
-    
+            ->selectRaw('SUM(pencicilan_rutin + pencicilan_bertahap) AS total_pembayaran')
+            ->join('lampiran', 'transactions.code', '=', 'lampiran.code');
+
         if ($request->filled('unit')) {
             $query->where('lampiran.unit', $request->unit);
         }
-    
+
         if ($request->filled('status')) {
             $query->where('lampiran.status_karyawan', $request->status);
         }
-    
+
         if ($request->filled('tanggal_spp')) {
             $query->whereDate('lampiran.tanggal_spp', '=', $request->tanggal_spp);
         }
-    
+
         if ($request->filled('tahun')) {
             $query->whereYear('lampiran.tanggal_spp', '=', $request->tahun);
         }
-    
+
         if ($request->filled('bulan')) {
             $query->whereMonth('lampiran.tanggal_spp', '=', $request->bulan);
         }
-    
+
         return $query->first();
     }
-    
+
     private function calculateTotalHutang($request)
     {
         $query = Lampiran::selectRaw('SUM(hutang) AS total_hutang');
-    
+
         if ($request->filled('unit')) {
             $query->where('unit', $request->unit);
         }
-    
+
         if ($request->filled('status')) {
             $query->where('status_karyawan', $request->status);
         }
-    
+
         if ($request->filled('tanggal_spp')) {
             $query->whereDate('tanggal_spp', '=', $request->tanggal_spp);
         }
-    
+
         if ($request->filled('tahun')) {
             $query->whereYear('tanggal_spp', '=', $request->tahun);
         }
-    
+
         if ($request->filled('bulan')) {
             $query->whereMonth('tanggal_spp', '=', $request->bulan);
         }
-    
+
         return $query->first();
     }
-       
+
 
     // Tampilkan form tambah user
     public function createUser()
